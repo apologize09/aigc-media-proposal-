@@ -1,0 +1,436 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum RoleName {
+  admin
+  editor
+  reviewer
+}
+
+enum AssetOrigin {
+  client_upload
+  web_reference
+  manual_link
+}
+
+enum MediaType {
+  image
+  video
+  document
+  link
+}
+
+enum LicenseStatus {
+  unknown
+  licensed
+  restricted
+}
+
+enum AiJobType {
+  analyze
+  draft_proposal
+  regenerate_block
+  transfer_asset
+  publish_render
+}
+
+enum AiJobStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum SearchHitSelection {
+  candidate
+  selected
+  dismissed
+}
+
+enum WorkTaskStatus {
+  draft
+  confirmed
+  cancelled
+}
+
+enum ReviewDecision {
+  approved
+  changes_requested
+}
+
+model User {
+  id               String          @id @default(cuid())
+  email            String          @unique
+  name             String
+  passwordHash     String          @map("password_hash")
+  status           UserStatus      @default(active)
+  financeAccess    Boolean         @default(false) @map("finance_access")
+  failedLoginCount Int             @default(0) @map("failed_login_count")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  roles            UserRole[]
+  sessions         Session[]
+  createdClients   Client[]        @relation("ClientCreatedBy")
+  ownedProjects    Project[]       @relation("ProjectOwner")
+  createdProjects  Project[]       @relation("ProjectCreatedBy")
+  projectMembers   ProjectMember[]
+  createdAssets    Asset[]         @relation("AssetCreatedBy")
+  createdJobs      AiJob[]         @relation("JobCreatedBy")
+  confirmedAnalyses Analysis[]     @relation("AnalysisConfirmedBy")
+  searchRuns       SearchRun[]     @relation("SearchRunCreatedBy")
+  draftUpdates     ProposalDraft[] @relation("DraftUpdatedBy")
+  snapshots        ProposalSnapshot[] @relation("SnapshotCreatedBy")
+  costSheetUpdates CostSheet[]     @relation("CostSheetUpdatedBy")
+  assignedTasks    WorkTask[]      @relation("TaskAssignee")
+  reviews          Review[]
+  deliveries       Delivery[]      @relation("DeliveryCreatedBy")
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+model Client {
+  id            String    @id @default(cuid())
+  name          String
+  contactName   String?   @map("contact_name")
+  contactEmail  String?   @map("contact_email")
+  contactPhone  String?   @map("contact_phone")
+  internalNotes String?   @map("internal_notes")
+  createdById   String    @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  createdBy     User      @relation("ClientCreatedBy", fields: [createdById], references: [id])
+  projects      Project[]
+
+  @@index([createdById])
+  @@map("clients")
+}
+
+model Project {
+  id          String             @id @default(cuid())
+  clientId    String             @map("client_id")
+  title       String
+  brief       String             @default("")
+  ownerUserId String             @map("owner_user_id")
+  archivedAt  DateTime?          @map("archived_at")
+  createdById String             @map("created_by")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  client      Client             @relation(fields: [clientId], references: [id])
+  owner       User               @relation("ProjectOwner", fields: [ownerUserId], references: [id])
+  createdBy   User               @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  members     ProjectMember[]
+  assets      Asset[]
+  aiJobs      AiJob[]
+  analyses    Analysis[]
+  searchRuns  SearchRun[]
+  draft       ProposalDraft?
+  snapshots   ProposalSnapshot[]
+  costSheet   CostSheet?
+  quoteLines  QuoteLine[]
+  workTasks   WorkTask[]
+  auditLogs   AuditLog[]
+
+  @@index([clientId])
+  @@index([ownerUserId])
+  @@index([archivedAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  role      RoleName
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@map("user_roles")
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime? @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Asset {
+  id            String        @id @default(cuid())
+  projectId     String        @map("project_id")
+  origin        AssetOrigin
+  mediaType     MediaType     @map("media_type")
+  storageKey    String?       @map("storage_key")
+  sourceUrl     String?       @map("source_url")
+  filename      String?
+  mime          String?
+  sizeBytes     Int?          @map("size_bytes")
+  licenseStatus LicenseStatus @default(unknown) @map("license_status")
+  attribution   String?
+  createdById   String        @map("created_by")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy     User          @relation("AssetCreatedBy", fields: [createdById], references: [id])
+  searchHits    SearchHit[]
+
+  @@index([projectId])
+  @@map("assets")
+}
+
+model AiJob {
+  id          String      @id @default(cuid())
+  projectId   String      @map("project_id")
+  type        AiJobType
+  status      AiJobStatus @default(queued)
+  input       Json?
+  output      Json?
+  error       String?
+  provider    String?
+  model       String?
+  usage       Json?
+  createdById String      @map("created_by")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User        @relation("JobCreatedBy", fields: [createdById], references: [id])
+  analyses    Analysis[]
+
+  @@index([projectId, status])
+  @@map("ai_jobs")
+}
+
+model Analysis {
+  id            String    @id @default(cuid())
+  projectId     String    @map("project_id")
+  aiJobId       String?   @map("ai_job_id")
+  versionNo     Int       @map("version_no")
+  isCurrent     Boolean   @default(false) @map("is_current")
+  payload       Json
+  confirmedById String?   @map("confirmed_by")
+  confirmedAt   DateTime? @map("confirmed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  aiJob         AiJob?    @relation(fields: [aiJobId], references: [id])
+  confirmedBy   User?     @relation("AnalysisConfirmedBy", fields: [confirmedById], references: [id])
+
+  @@index([projectId, isCurrent])
+  @@map("analyses")
+}
+
+model SearchRun {
+  id          String       @id @default(cuid())
+  projectId   String       @map("project_id")
+  query       String
+  provider    String
+  status      String
+  createdById String       @map("created_by")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation("SearchRunCreatedBy", fields: [createdById], references: [id])
+  hits        SearchHit[]
+
+  @@index([projectId])
+  @@map("search_runs")
+}
+
+model SearchHit {
+  id           String             @id @default(cuid())
+  searchRunId  String             @map("search_run_id")
+  mediaType    MediaType          @map("media_type")
+  title        String?
+  url          String
+  thumbnailUrl String?            @map("thumbnail_url")
+  snippet      String?
+  rank         Int                @default(0)
+  selection    SearchHitSelection @default(candidate)
+  assetId      String?            @map("asset_id")
+  searchRun    SearchRun          @relation(fields: [searchRunId], references: [id], onDelete: Cascade)
+  asset        Asset?             @relation(fields: [assetId], references: [id])
+
+  @@index([searchRunId])
+  @@map("search_hits")
+}
+
+model ProposalDraft {
+  id                 String             @id @default(cuid())
+  projectId          String             @unique @map("project_id")
+  projectJson        Json               @map("project_json")
+  basedOnSnapshotId  String?            @map("based_on_snapshot_id")
+  updatedById        String             @map("updated_by")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  project            Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedBy          User               @relation("DraftUpdatedBy", fields: [updatedById], references: [id])
+  basedOnSnapshot    ProposalSnapshot?  @relation("DraftBasedOn", fields: [basedOnSnapshotId], references: [id])
+
+  @@map("proposal_drafts")
+}
+
+model ProposalSnapshot {
+  id              String          @id @default(cuid())
+  projectId       String          @map("project_id")
+  versionNo       Int             @map("version_no")
+  document        Json
+  quoteSnapshot   Json            @map("quote_snapshot")
+  htmlStorageKey  String          @map("html_storage_key")
+  cssStorageKey   String?         @map("css_storage_key")
+  pdfStorageKey   String?         @map("pdf_storage_key")
+  createdById     String          @map("created_by")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy       User            @relation("SnapshotCreatedBy", fields: [createdById], references: [id])
+  draftsBasedOn   ProposalDraft[] @relation("DraftBasedOn")
+  reviews         Review[]
+  deliveries      Delivery[]
+  workTasks       WorkTask[]
+
+  @@unique([projectId, versionNo])
+  @@index([projectId])
+  @@map("proposal_snapshots")
+}
+
+model CostSheet {
+  id          String     @id @default(cuid())
+  projectId   String     @unique @map("project_id")
+  currency    String?
+  updatedById String     @map("updated_by")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedBy   User       @relation("CostSheetUpdatedBy", fields: [updatedById], references: [id])
+  lines       CostLine[]
+
+  @@map("cost_sheets")
+}
+
+model CostLine {
+  id          String      @id @default(cuid())
+  costSheetId String      @map("cost_sheet_id")
+  label       String
+  quantity    Decimal     @db.Decimal(14, 2)
+  unit        String?
+  unitAmount  Decimal?    @map("unit_amount") @db.Decimal(14, 2)
+  lineAmount  Decimal     @map("line_amount") @db.Decimal(14, 2)
+  note        String?
+  position    Int         @default(0)
+  costSheet   CostSheet   @relation(fields: [costSheetId], references: [id], onDelete: Cascade)
+  quoteLines  QuoteLine[]
+
+  @@index([costSheetId])
+  @@map("cost_lines")
+}
+
+model QuoteLine {
+  id                 String    @id @default(cuid())
+  projectId          String    @map("project_id")
+  label              String
+  quantity           Decimal   @db.Decimal(14, 2)
+  unit               String?
+  unitAmount         Decimal?  @map("unit_amount") @db.Decimal(14, 2)
+  lineAmount         Decimal   @map("line_amount") @db.Decimal(14, 2)
+  visibleInProposal  Boolean   @default(false) @map("visible_in_proposal")
+  costLineId         String?   @map("cost_line_id")
+  position           Int       @default(0)
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  costLine           CostLine? @relation(fields: [costLineId], references: [id])
+
+  @@index([projectId])
+  @@map("quote_lines")
+}
+
+model WorkTask {
+  id             String           @id @default(cuid())
+  projectId      String           @map("project_id")
+  snapshotId     String?          @map("snapshot_id")
+  title          String
+  detail         String?
+  status         WorkTaskStatus   @default(draft)
+  assigneeUserId String?          @map("assignee_user_id")
+  startOn        DateTime?        @map("start_on") @db.Date
+  endOn          DateTime?        @map("end_on") @db.Date
+  position       Int              @default(0)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot       ProposalSnapshot? @relation(fields: [snapshotId], references: [id])
+  assignee       User?            @relation("TaskAssignee", fields: [assigneeUserId], references: [id])
+
+  @@index([projectId])
+  @@map("work_tasks")
+}
+
+model Review {
+  id         String           @id @default(cuid())
+  snapshotId String           @map("snapshot_id")
+  reviewerId String           @map("reviewer_id")
+  decision   ReviewDecision
+  comment    String?
+  createdAt  DateTime         @default(now()) @map("created_at")
+  snapshot   ProposalSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  reviewer   User             @relation(fields: [reviewerId], references: [id])
+
+  @@index([snapshotId])
+  @@map("reviews")
+}
+
+model Delivery {
+  id          String           @id @default(cuid())
+  snapshotId  String           @map("snapshot_id")
+  tokenHash   String           @unique @map("token_hash")
+  expiresAt   DateTime?        @map("expires_at")
+  revokedAt   DateTime?        @map("revoked_at")
+  createdById String           @map("created_by")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  snapshot    ProposalSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation("DeliveryCreatedBy", fields: [createdById], references: [id])
+
+  @@index([snapshotId])
+  @@map("deliveries")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  projectId   String?  @map("project_id")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  project     Project? @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
